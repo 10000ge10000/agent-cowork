@@ -2,9 +2,21 @@ name: Build and Release
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag, for example v0.2.0"
+        required: true
+        type: string
+      release_name:
+        description: "Release title, for example Agent Cowork v0.2.0"
+        required: true
+        type: string
+      release_notes:
+        description: "Optional extra release notes. Leave empty to use the default template."
+        required: false
+        type: string
   push:
     branches: ["main"]
-    tags: ["v*"]
   pull_request:
     branches: ["main"]
 
@@ -76,6 +88,12 @@ jobs:
       - name: Build Desktop
         run: bun run ${{ matrix.script }}
 
+      - name: Package Windows Unpacked Build
+        if: matrix.platform == 'win'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/win-unpacked/*" -DestinationPath "dist/Agent-Cowork-windows-x64-unpacked.zip" -Force
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -84,11 +102,12 @@ jobs:
             dist/*.dmg
             dist/*.AppImage
             dist/*.exe
+            dist/*.zip
 
   release:
     needs: [build-desktop]
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -112,36 +131,52 @@ jobs:
           sha256sum * > SHA256SUMS || true
           cat SHA256SUMS
 
-      - name: Move Latest Tag
-        if: github.ref == 'refs/heads/main'
+      - name: Create Release Notes
+        env:
+          CUSTOM_RELEASE_NOTES: ${{ inputs.release_notes }}
         run: |
-          git tag -f latest "$GITHUB_SHA"
-          git push origin latest --force
+          cat > release-notes.md <<'NOTES'
+          ## 下载哪个文件？
 
-      - name: Update Latest Release
-        if: github.ref == 'refs/heads/main'
+          - Windows 普通用户：下载 `.exe`，双击运行。
+          - Windows 想解压即用：下载 `Agent-Cowork-windows-x64-unpacked.zip`，解压后运行 `Agent Cowork.exe`。
+          - macOS M 系列芯片：下载 `arm64.dmg`。
+          - macOS Intel 芯片：下载 `x64.dmg`。
+          - Linux：下载 `.AppImage`，必要时执行 `chmod +x 文件名.AppImage` 后运行。
+
+          ## 首次使用
+
+          1. 打开设置。
+          2. 选择 `NVIDIA` 或 `自定义 API`。
+          3. 填入 API Key、Base URL 和模型名。
+          4. 新建任务并选择要处理的项目目录。
+
+          ## 说明
+
+          Agent Cowork 工具本身免费开源。模型 API 是否免费，取决于你使用的服务商和当前额度规则。
+          NOTES
+
+          if [ -n "$CUSTOM_RELEASE_NOTES" ]; then
+            {
+              echo ""
+              echo "## 本次更新"
+              printf '%s\n' "$CUSTOM_RELEASE_NOTES"
+            } >> release-notes.md
+          fi
+
+      - name: Move Version Tag
+        run: |
+          git tag -f "${{ inputs.version }}" "$GITHUB_SHA"
+          git push origin "${{ inputs.version }}" --force
+
+      - name: Create Manual Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: Latest Build
-          body: |
-            这是 main 分支最新一次成功构建的自动发布版本。
-
-            每次推送到 main 并且全部平台构建成功后，这个 Release 会自动更新。
+          tag_name: ${{ inputs.version }}
+          name: ${{ inputs.release_name }}
+          body_path: release-notes.md
           draft: false
           prerelease: false
-          make_latest: true
-          files: release-assets/*
-          fail_on_unmatched_files: false
-
-      - name: Create Versioned Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          draft: false
-          generate_release_notes: true
           make_latest: true
           files: release-assets/*
           fail_on_unmatched_files: false
