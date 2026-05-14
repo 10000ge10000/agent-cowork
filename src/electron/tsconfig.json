@@ -1,0 +1,26 @@
+{
+    "compilerOptions": {
+        "strict": true,
+        "target": "ESNext",
+        "module": "NodeNext",
+        "outDir": "../../dist-electron",
+        "skipLibCheck": true,
+        "noUncheckedIndexedAccess": true,
+        "noImplicitReturns": true,
+        "forceConsistentCasingInFileNames": true,
+        "types": [
+            "../../types"
+        ]
+    },
+    "include": [
+        "*.ts",
+        "*.cts",
+        "libs/**/*.ts"
+    ],
+    "exclude": [
+        "libs/__tests__",
+        "libs/*.test.ts",
+        "libs/*.spec.ts",
+        "test.ts"
+    ]
+}

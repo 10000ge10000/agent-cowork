@@ -1,0 +1,31 @@
+{
+    "appId": "com.10000ge10000.agentcowork",
+    "productName": "Agent Cowork",
+    "files": [
+        "dist-electron",
+        "dist-react"
+    ],
+    "extraResources": [
+        {
+            "from": "claude-color.png",
+            "to": "claude-color.png"
+        }
+    ],
+    "asarUnpack": [
+        "node_modules/@anthropic-ai/claude-agent-sdk/**/*",
+        "node_modules/better-sqlite3/**/*"
+    ],
+    "icon": "./claude-color.png",
+    "mac": {
+        "target": "dmg"
+    },
+    "linux": {
+        "target": "AppImage",
+        "category": "Utility"
+    },
+    "win": {
+        "target": [
+            "portable"
+        ]
+    }
+}
