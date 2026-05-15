@@ -11,8 +11,8 @@
 你可以把它装在自己的电脑上，接入 NVIDIA NIM 的免费/试用模型额度，或者接入你自己的兼容 API，让 AI 帮你读项目、改代码、写文档、看日志、整理发布材料。
 
 [![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/10000ge10000/agent-cowork/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/10000ge10000/agent-cowork/releases)
-[![Tests](https://img.shields.io/badge/tests-68%20passed-brightgreen.svg)](#本地文件和安全说明)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey.svg)](https://github.com/10000ge10000/agent-cowork/releases)
+[![Tests](https://img.shields.io/badge/tests-78%20passed-brightgreen.svg)](#本地文件和安全说明)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 </div>
@@ -47,7 +47,7 @@ Agent Cowork 是一个跨平台桌面 AI 协作客户端，基于原项目 [`Dev
 | NVIDIA NIM 支持 | 内置 Anthropic-to-OpenAI 本地代理，把请求转到 `/chat/completions`。 |
 | 自定义 API | 可填写自己的 Anthropic 兼容服务地址和模型名。 |
 | 权限策略 | `Bash`、`Write`、`Edit` 等危险工具默认需要确认，避免误操作。 |
-| 跨平台打包 | 支持 Windows portable、Windows 解压版、macOS dmg、Linux AppImage。 |
+| Windows 打包 | 支持 Windows portable 和 Windows 解压即用版本；macOS、Linux 构建暂未发布，等待真实环境验证后恢复。 |
 
 ## 和原项目有什么不同？
 
@@ -61,7 +61,7 @@ Agent Cowork 是一个跨平台桌面 AI 协作客户端，基于原项目 [`Dev
 | 权限控制 | 更多依赖 SDK 默认行为 | 主进程统一决策，危险工具默认确认 |
 | IPC 安全 | 主要依赖 TypeScript 类型 | 增加运行时校验，未知事件不会进入业务处理 |
 | 设置页 | 配置能力较少 | 增加 API、模型、权限策略等设置 |
-| 测试与 CI | 覆盖较少 | 当前 68 个测试用例通过，并接入 GitHub Actions |
+| 测试与 CI | 覆盖较少 | 当前 78 个测试用例通过，并接入 GitHub Actions |
 | Windows 分发 | 不是重点 | 增加 Windows x64 portable 和解压即用版本 |
 
 ## 下载和使用
@@ -78,9 +78,7 @@ https://github.com/10000ge10000/agent-cowork/releases
 | --- | --- | --- |
 | Windows 普通用户 | `.exe` | 双击运行。 |
 | Windows 想解压即用 | `windows-x64-unpacked.zip` | 解压后运行 `Agent Cowork.exe`。 |
-| macOS M 系列芯片 | `arm64.dmg` | 打开 dmg 后拖入 Applications。 |
-| macOS Intel 芯片 | `x64.dmg` | 打开 dmg 后拖入 Applications。 |
-| Linux | `.AppImage` | 必要时执行 `chmod +x` 后运行。 |
+| macOS / Linux | 暂未发布 | 暂时没有稳定测试环境，后续验证后再恢复构建。 |
 
 首次使用：
 
@@ -93,26 +91,28 @@ https://github.com/10000ge10000/agent-cowork/releases
 
 ### 推荐：NVIDIA NIM 免费/试用端点
 
-如果你想尽量不花钱，优先试 NVIDIA NIM。设置页可以这样填：
+如果你想尽量不花钱，优先试 NVIDIA NIM。先到 NVIDIA Build 创建 API Key：
+
+```text
+https://build.nvidia.com/settings/api-keys
+```
+
+拿到 Key 后，设置页按下面填写：
 
 | 配置项 | 示例 |
 | --- | --- |
 | API 类型 | `NVIDIA` |
 | Base URL | `https://integrate.api.nvidia.com/v1` |
-| API Key | 填你的 NVIDIA NIM Key |
+| API Key | 填你在 NVIDIA Build 创建的 API Key，通常以 `nvapi-` 开头 |
 | 模型 | `minimaxai/minimax-m2.7` |
 
-除了下拉菜单里的模型，也可以手动填写这些 NVIDIA API Catalog 里的免费/试用端点模型名：
+当前版本的 NVIDIA 模式只建议填写：
 
 ```text
-moonshotai/kimi-k2.5
-z-ai/glm5.1
-z-ai/glm4.7
-qwen/qwen3-coder-480b-a35b-instruct
-deepseek-ai/deepseek-r1-distill-qwen-32b
-nvidia/llama-3.3-nemotron-super-49b-v1.5
-qwen/qwen2.5-coder-7b-instruct
+minimaxai/minimax-m2.7
 ```
+
+不要随意把 NVIDIA API Catalog 里的其他模型 ID 填进去。普通聊天接口可用，不代表能稳定跑 Claude Agent SDK 的工具调用、会话恢复和长上下文流程。之前测试过的部分模型可以通过简单 API 请求，但在 Agent 运行时链路里会失败，所以当前默认只保留 `minimaxai/minimax-m2.7`。
 
 免费额度、模型可用性、限速和上下文长度以 NVIDIA Build/API Catalog 当前页面为准。NVIDIA 模式下，Agent Cowork 会在本机启动一个只监听 `127.0.0.1` 的代理，把 Claude Agent SDK 的 `/v1/messages` 请求转换成 OpenAI 风格的 `/chat/completions` 请求。
 
