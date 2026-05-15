@@ -6,7 +6,7 @@ import { getStaticData, pollResources, stopPolling } from "./test.js";
 import { handleClientEvent, sessions, cleanupAllSessions } from "./ipc-handlers.js";
 import { generateSessionTitle } from "./libs/util.js";
 import { loadPermissionConfig, saveApiConfig, savePermissionConfig } from "./libs/config-store.js";
-import { getCurrentApiConfig } from "./libs/claude-settings.js";
+import { getCurrentApiConfig, normalizeApiConfigForAgent } from "./libs/claude-settings.js";
 import { parseClientEventPayload } from "./libs/ipc-contract.js";
 import { DEFAULT_PROXY_PORT, startProxy, stopProxy, getProxyStatus } from "./libs/anthropic-proxy.js";
 import { testApiConnection } from "./libs/api-connection.js";
@@ -178,7 +178,7 @@ app.on("ready", () => {
     ipcMainHandle("save-api-config", async (_event, config) => {
         console.warn("[Main] save-api-config called, isPackaged:", app.isPackaged);
         try {
-            const apiConfig = config as Parameters<typeof saveApiConfig>[0];
+            const apiConfig = normalizeApiConfigForAgent(config as Parameters<typeof saveApiConfig>[0]);
             console.warn("[Main] Saving API config:", { apiType: apiConfig.apiType, baseURL: apiConfig.baseURL, model: apiConfig.model });
             saveApiConfig(apiConfig);
             console.warn("[Main] API config saved successfully");
@@ -224,7 +224,7 @@ app.on("ready", () => {
 
     // API 连接测试（在主进程执行，避免 CORS）
     ipcMainHandle("test-api-connection", async (_event, config) => {
-        const apiConfig = config as ApiConfig;
+        const apiConfig = normalizeApiConfigForAgent(config as ApiConfig);
         console.warn("[Main] Starting API connection test...", {
             apiType: apiConfig.apiType,
             baseURL: apiConfig.baseURL,

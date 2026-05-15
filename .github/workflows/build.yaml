@@ -1,182 +1,223 @@
-name: Build and Release
+name: Build Windows Release
 
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: "Release tag, for example v0.2.0"
-        required: true
-        type: string
-      release_name:
-        description: "Release title, for example Agent Cowork v0.2.0"
-        required: true
-        type: string
-      release_notes:
-        description: "Optional extra release notes. Leave empty to use the default template."
+      release_tag:
+        description: "Release tag. Leave empty to use package.json version, for example v0.2.0."
         required: false
         type: string
-  push:
-    branches: ["main"]
-  pull_request:
-    branches: ["main"]
+      release_name:
+        description: "Release title. Leave empty to use Agent Cowork <tag>."
+        required: false
+        type: string
+      release_notes:
+        description: "Extra release notes appended under '本次更新'."
+        required: false
+        type: string
+      draft:
+        description: "Create or update the release as draft."
+        required: true
+        default: false
+        type: boolean
+      prerelease:
+        description: "Mark the release as prerelease."
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
 
 jobs:
-  lint-and-test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Run ESLint
-        run: bun run lint
-
-      - name: Run TypeScript check
-        run: bun run typecheck
-
-      - name: Run tests
-        run: bun run test
-
-  build-desktop:
-    needs: [lint-and-test]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            platform: linux
-            arch: x64
-            script: dist:linux
-          - os: windows-latest
-            platform: win
-            arch: x64
-            script: dist:win
-          - os: macos-latest
-            platform: mac
-            arch: arm64
-            script: dist:mac-arm64
-          - os: macos-15-intel
-            platform: mac
-            arch: x64
-            script: dist:mac-x64
+  build-windows:
+    name: Build Windows exe and win-unpacked
+    runs-on: windows-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+      INPUT_RELEASE_NAME: ${{ inputs.release_name }}
+      INPUT_RELEASE_NOTES: ${{ inputs.release_notes }}
+      INPUT_DRAFT: ${{ inputs.draft }}
+      INPUT_PRERELEASE: ${{ inputs.prerelease }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Build Desktop
-        run: bun run ${{ matrix.script }}
-
-      - name: Package Windows Unpacked Build
-        if: matrix.platform == 'win'
-        shell: pwsh
-        run: |
-          Compress-Archive -Path "dist/win-unpacked/*" -DestinationPath "dist/Agent-Cowork-windows-x64-unpacked.zip" -Force
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
-          path: |
-            dist/*.dmg
-            dist/*.AppImage
-            dist/*.exe
-            dist/*.zip
-
-  release:
-    needs: [build-desktop]
-    runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Download All Artifacts
-        uses: actions/download-artifact@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          path: release-assets
-          merge-multiple: true
+          bun-version: latest
 
-      - name: List Release Assets
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: TypeScript check
+        run: bun run typecheck
+
+      - name: Run tests
+        run: bun run test
+
+      - name: Resolve release metadata
+        id: meta
+        shell: pwsh
         run: |
-          echo "Release assets:"
-          ls -la release-assets/
+          $ErrorActionPreference = "Stop"
+          $package = Get-Content -Raw -Path "package.json" | ConvertFrom-Json
+          $version = [string]$package.version
+          $tag = $env:INPUT_RELEASE_TAG.Trim()
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            $tag = "v$version"
+          }
 
-      - name: Generate Checksums
+          $releaseName = $env:INPUT_RELEASE_NAME.Trim()
+          if ([string]::IsNullOrWhiteSpace($releaseName)) {
+            $releaseName = "Agent Cowork $tag"
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "release_name=$releaseName" >> $env:GITHUB_OUTPUT
+
+      - name: Build Windows package
+        run: bun run dist:win
+
+      - name: Package win-unpacked
+        shell: pwsh
         run: |
-          cd release-assets
-          sha256sum * > SHA256SUMS || true
-          cat SHA256SUMS
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path "release-assets" | Out-Null
+          Copy-Item -LiteralPath "dist/Agent Cowork ${{ steps.meta.outputs.version }}.exe" -Destination "release-assets/Agent Cowork ${{ steps.meta.outputs.version }}.exe" -Force
+          Compress-Archive -Path "dist/win-unpacked/*" -DestinationPath "release-assets/Agent-Cowork-${{ steps.meta.outputs.version }}-windows-x64-win-unpacked.zip" -Force
 
-      - name: Create Release Notes
-        env:
-          CUSTOM_RELEASE_NOTES: ${{ inputs.release_notes }}
+      - name: Generate SHA256 checksums
+        shell: pwsh
         run: |
-          cat > release-notes.md <<'NOTES'
-          ## 下载哪个文件？
+          $ErrorActionPreference = "Stop"
+          Push-Location "release-assets"
+          $files = Get-ChildItem -File | Sort-Object Name
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLowerInvariant()
+            "$hash  $($file.Name)"
+          }
+          $lines | Set-Content -Encoding UTF8 -Path "SHA256SUMS"
+          Get-Content -Path "SHA256SUMS"
+          Pop-Location
 
-          - Windows 普通用户：下载 `.exe`，双击运行。
-          - Windows 想解压即用：下载 `Agent-Cowork-windows-x64-unpacked.zip`，解压后运行 `Agent Cowork.exe`。
-          - macOS M 系列芯片：下载 `arm64.dmg`。
-          - macOS Intel 芯片：下载 `x64.dmg`。
-          - Linux：下载 `.AppImage`，必要时执行 `chmod +x 文件名.AppImage` 后运行。
-
-          ## 首次使用
-
-          1. 打开设置。
-          2. 选择 `NVIDIA` 或 `自定义 API`。
-          3. 填入 API Key、Base URL 和模型名。
-          4. 新建任务并选择要处理的项目目录。
-
-          ## 说明
-
-          Agent Cowork 工具本身免费开源。模型 API 是否免费，取决于你使用的服务商和当前额度规则。
-          NOTES
-
-          if [ -n "$CUSTOM_RELEASE_NOTES" ]; then
-            {
-              echo ""
-              echo "## 本次更新"
-              printf '%s\n' "$CUSTOM_RELEASE_NOTES"
-            } >> release-notes.md
-          fi
-
-      - name: Move Version Tag
+      - name: Create release notes
+        shell: pwsh
         run: |
-          git tag -f "${{ inputs.version }}" "$GITHUB_SHA"
-          git push origin "${{ inputs.version }}" --force
+          $ErrorActionPreference = "Stop"
+          $tag = "${{ steps.meta.outputs.tag }}"
+          $version = "${{ steps.meta.outputs.version }}"
+          $commit = "${{ github.sha }}"
+          $customNotes = $env:INPUT_RELEASE_NOTES
+          $checksums = Get-Content -Raw -Path "release-assets/SHA256SUMS"
 
-      - name: Create Manual Release
-        uses: softprops/action-gh-release@v2
+          $body = @"
+          ## 下载说明
+
+          - `Agent Cowork $version.exe`：Windows 便携版，下载后双击运行。
+          - `Agent-Cowork-$version-windows-x64-win-unpacked.zip`：解压即用版本，解压后运行 `Agent Cowork.exe`。
+          - `SHA256SUMS`：用于校验下载文件完整性。
+
+          ## 运行环境
+
+          - 当前 release 只提供 Windows x64 构建。
+          - Windows 包已内置 PortableGit/Git Bash，用户不需要手动安装 Git for Windows。
+          - macOS 和 Linux 构建暂未启用，等待真实测试环境验证后再恢复。
+
+          ## 构建信息
+
+          - Version: `$version`
+          - Tag: `$tag`
+          - Commit: `$commit`
+
+          ## 校验值
+
+          ````text
+          $checksums
+          ````
+          "@
+
+          if (-not [string]::IsNullOrWhiteSpace($customNotes)) {
+            $body += @"
+
+          ## 本次更新
+
+          $customNotes
+          "@
+          }
+
+          $body | Set-Content -Encoding UTF8 -Path "release-notes.md"
+          Get-Content -Path "release-notes.md"
+
+      - name: Create or update Git tag
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          git config user.name "10000ge10000"
+          git config user.email "10000ge10000@users.noreply.github.com"
+          git tag -f "${{ steps.meta.outputs.tag }}" "${{ github.sha }}"
+          git push origin "${{ steps.meta.outputs.tag }}" --force
+
+      - name: Create or update GitHub Release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "${{ steps.meta.outputs.tag }}"
+          $title = "${{ steps.meta.outputs.release_name }}"
+          $draft = [System.Convert]::ToBoolean($env:INPUT_DRAFT)
+          $prerelease = [System.Convert]::ToBoolean($env:INPUT_PRERELEASE)
+
+          $releaseExists = $false
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            $releaseExists = $true
+          }
+
+          $stateArgs = @()
+          if ($draft) {
+            $stateArgs += "--draft"
+          } elseif (-not $prerelease) {
+            $stateArgs += "--latest"
+          }
+          if ($prerelease) {
+            $stateArgs += "--prerelease"
+          }
+
+          if ($releaseExists) {
+            gh release edit $tag --title $title --notes-file release-notes.md @stateArgs
+          } else {
+            gh release create $tag --title $title --notes-file release-notes.md @stateArgs
+          }
+
+          gh release upload $tag "release-assets/Agent Cowork ${{ steps.meta.outputs.version }}.exe" --clobber
+          gh release upload $tag "release-assets/Agent-Cowork-${{ steps.meta.outputs.version }}-windows-x64-win-unpacked.zip" --clobber
+          gh release upload $tag "release-assets/SHA256SUMS" --clobber
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ inputs.version }}
-          name: ${{ inputs.release_name }}
-          body_path: release-notes.md
-          draft: false
-          prerelease: false
-          make_latest: true
-          files: release-assets/*
-          fail_on_unmatched_files: false
+          name: agent-cowork-windows-${{ steps.meta.outputs.version }}
+          path: |
+            release-assets/*
+            release-notes.md
+
+  # macos-build:
+  #   name: Build macOS
+  #   runs-on: macos-latest
+  #   if: false
+  #   steps:
+  #     - run: echo "macOS build is intentionally disabled until a tested environment is available."
+
+  # linux-build:
+  #   name: Build Linux
+  #   runs-on: ubuntu-latest
+  #   if: false
+  #   steps:
+  #     - run: echo "Linux build is intentionally disabled until a tested environment is available."

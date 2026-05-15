@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { join } from "path";
+import { delimiter, join } from "path";
 import { homedir } from "os";
 import { loadApiConfig, saveApiConfig, type ApiConfig, type ApiType } from "./config-store.js";
 import { app } from "electron";
 import { DEFAULT_PROXY_PORT } from "./anthropic-proxy.js";
+import { NVIDIA_DEFAULT_AGENT_MODEL, isSupportedNvidiaAgentModel } from "../../shared/nvidia-models.js";
 
 // Get Claude Code CLI path
 export function getClaudeCodePath(): string {
@@ -63,16 +64,91 @@ function ensureAppClaudeConfig(config: ApiConfig): string {
   return configDir;
 }
 
+export function resolveGitBashPath(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (process.platform !== "win32") {
+    return null;
+  }
+
+  const resourcesPath = process.resourcesPath;
+  const candidates = [
+    resourcesPath ? join(resourcesPath, "git", "bin", "bash.exe") : undefined,
+    resourcesPath ? join(resourcesPath, "git", "usr", "bin", "bash.exe") : undefined,
+    env.CLAUDE_CODE_GIT_BASH_PATH,
+    ...(env.PATH || "")
+      .split(delimiter)
+      .filter(Boolean)
+      .map((pathDir) => join(pathDir, "bash.exe")),
+    "C:\\Program Files\\Git\\bin\\bash.exe",
+    "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+    "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+    "C:\\Program Files (x86)\\Git\\usr\\bin\\bash.exe",
+    env.LOCALAPPDATA ? join(env.LOCALAPPDATA, "Programs", "Git", "bin", "bash.exe") : undefined,
+    env.LOCALAPPDATA ? join(env.LOCALAPPDATA, "Programs", "Git", "usr", "bin", "bash.exe") : undefined,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function prependBundledGitToPath(env: Record<string, string>): void {
+  if (process.platform !== "win32" || !process.resourcesPath) {
+    return;
+  }
+
+  const gitRoot = join(process.resourcesPath, "git");
+  if (!existsSync(gitRoot)) {
+    return;
+  }
+
+  const pathEntries = [
+    join(gitRoot, "cmd"),
+    join(gitRoot, "bin"),
+    join(gitRoot, "usr", "bin"),
+    join(gitRoot, "mingw64", "bin"),
+  ].filter((pathEntry) => existsSync(pathEntry));
+
+  if (pathEntries.length > 0) {
+    env.PATH = [...pathEntries, env.PATH || ""].filter(Boolean).join(delimiter);
+  }
+}
+
+export function normalizeApiConfigForAgent(config: ApiConfig): ApiConfig {
+  const apiType = config.apiType || "nvidia";
+  if (apiType !== "nvidia") {
+    return { ...config, apiType };
+  }
+
+  if (isSupportedNvidiaAgentModel(config.model)) {
+    return { ...config, apiType };
+  }
+
+  console.warn("[claude-settings] Unsupported NVIDIA Agent model, falling back:", {
+    requestedModel: config.model,
+    fallbackModel: NVIDIA_DEFAULT_AGENT_MODEL,
+  });
+  return {
+    ...config,
+    apiType,
+    model: NVIDIA_DEFAULT_AGENT_MODEL,
+  };
+}
+
 // 获取当前有效的配置（优先界面配置，回退到文件配置）
 export function getCurrentApiConfig(): ApiConfig | null {
   const uiConfig = loadApiConfig();
   if (uiConfig) {
+    const normalizedConfig = normalizeApiConfigForAgent(uiConfig);
     console.warn("[claude-settings] Using UI config:", {
-      baseURL: uiConfig.baseURL,
-      model: uiConfig.model,
-      apiType: uiConfig.apiType
+      baseURL: normalizedConfig.baseURL,
+      model: normalizedConfig.model,
+      apiType: normalizedConfig.apiType
     });
-    return uiConfig;
+    return normalizedConfig;
   }
 
   // 回退到 ~/.claude/settings.json
@@ -125,6 +201,7 @@ export function getCurrentApiConfig(): ApiConfig | null {
  * - 直接使用用户提供的 ANTHROPIC_BASE_URL
  */
 export function buildEnvForConfig(config: ApiConfig): Record<string, string> {
+  config = normalizeApiConfigForAgent(config);
   const baseEnv = { ...process.env } as Record<string, string>;
   const apiType = config.apiType || "nvidia";
   const claudeConfigDir = ensureAppClaudeConfig(config);
@@ -133,6 +210,18 @@ export function buildEnvForConfig(config: ApiConfig): Record<string, string> {
   baseEnv.ANTHROPIC_API_KEY = config.apiKey;
   baseEnv.ANTHROPIC_AUTH_TOKEN = config.apiKey;
   baseEnv.CLAUDE_CONFIG_DIR = claudeConfigDir;
+  // 打包后的 Electron 主进程里，child_process.fork() 默认会复用 Agent Cowork.exe。
+  // Claude Agent SDK 需要 fork 这个 exe 去执行 cli.js；该变量会让 Electron 子进程按 Node 模式启动，
+  // 否则会话刚发出就会因为 CLI 子进程启动失败而立刻结束。
+  baseEnv.ELECTRON_RUN_AS_NODE = "1";
+  prependBundledGitToPath(baseEnv);
+
+  const gitBashPath = resolveGitBashPath(baseEnv);
+  if (gitBashPath) {
+    // Claude Code 在 Windows 上依赖 Git Bash 执行 Bash 工具。
+    // 有些机器安装了 Git，但安装路径没有写入 PATH；这里主动传入 bash.exe 路径，避免打包版在其他电脑上 code 1 退出。
+    baseEnv.CLAUDE_CODE_GIT_BASH_PATH = gitBashPath;
+  }
 
   if (apiType === "nvidia") {
     // NVIDIA API 必须通过本地代理转换协议，禁止回退直连 NVIDIA。
@@ -156,6 +245,7 @@ export function buildEnvForConfig(config: ApiConfig): Record<string, string> {
     model: baseEnv.ANTHROPIC_MODEL,
     targetModel: config.model,
     claudeConfigDir,
+    gitBashPath: baseEnv.CLAUDE_CODE_GIT_BASH_PATH || "-",
     hasApiKey: !!baseEnv.ANTHROPIC_AUTH_TOKEN
   });
 

@@ -77,6 +77,30 @@ function emit(event: ServerEvent) {
   broadcast(event);
 }
 
+export async function resolveResumeSessionIdForContinue(
+  session: { id: string; claudeSessionId?: string; status: string },
+  getLatestSession: () => { claudeSessionId?: string } | undefined,
+  maxWaitMs = 5000
+): Promise<string | undefined> {
+  if (session.claudeSessionId) return session.claudeSessionId;
+
+  // 只有仍在启动中的会话才需要短暂等待 init 事件写入 claudeSessionId。
+  // 对已经 completed/error/idle 的历史会话，继续等待没有意义；跨电脑或旧版本数据里
+  // 可能根本没有这个 SDK 级会话 ID，此时应该降级为同一个本地会话里的新运行。
+  if (session.status !== "running") return undefined;
+
+  const startTime = Date.now();
+  while (Date.now() - startTime < maxWaitMs) {
+    const updatedSession = getLatestSession();
+    if (updatedSession?.claudeSessionId) {
+      return updatedSession.claudeSessionId;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  return undefined;
+}
+
 export function handleClientEvent(event: ClientEvent) {
   console.warn("[IPC Handlers] handleClientEvent called:", event.type);
   // Initialize sessions on first event
@@ -197,36 +221,19 @@ export function handleClientEvent(event: ClientEvent) {
       return;
     }
 
-    // 等待 claudeSessionId 的异步函数
-    const waitForClaudeSessionId = async (maxWaitMs: number): Promise<string | null> => {
-      if (session.claudeSessionId) return session.claudeSessionId;
-
-      const startTime = Date.now();
-      while (Date.now() - startTime < maxWaitMs) {
-        // 检查是否有更新
-        const updatedSession = sessions.getSession(event.payload.sessionId);
-        if (updatedSession?.claudeSessionId) {
-          return updatedSession.claudeSessionId;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      return null;
-    };
-
-    // 射手函数处理恢复逻辑
+    // 异步处理恢复逻辑
     const continueSession = async () => {
-      // 等待最多 5 秒获取 claudeSessionId
-      const claudeSessionId = await waitForClaudeSessionId(5000);
+      const claudeSessionId = await resolveResumeSessionIdForContinue(
+        session,
+        () => sessions.getSession(event.payload.sessionId),
+        5000
+      );
 
       if (!claudeSessionId) {
-        emit({
-          type: "runner.error",
-          payload: {
-            sessionId: session.id,
-            message: "Session is not ready for resume. Please wait for the initial response or start a new session."
-          }
-        });
-        return;
+        console.warn(
+          `[IPC Handlers] Session ${session.id} has no Claude SDK session id; ` +
+            "continuing as a fresh SDK run in the existing local session."
+        );
       }
 
       sessions.updateSession(session.id, { status: "running", lastPrompt: event.payload.prompt });

@@ -35,3 +35,7 @@ tmpclaude*cwd
 # 不上传的文档
 CONTRIBUTING.md
 UPGRADE_PLAN.md
+
+# Build-time downloaded PortableGit runtime
+/vendor/git/
+/vendor/_downloads/

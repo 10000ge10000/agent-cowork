@@ -98,6 +98,8 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
   const { prompt, session, resumeSessionId, onEvent, onSessionUpdate } = options;
   const abortController = new AbortController();
   const permissionManager = getPermissionManager();
+  let claudeStderr = "";
+  let activeApiKey: string | undefined;
 
   // ============================================
   // 辅助函数
@@ -186,6 +188,17 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
     });
   };
 
+  const appendClaudeStderr = (chunk: string): void => {
+    const sanitized = activeApiKey ? chunk.replaceAll(activeApiKey, "[REDACTED_API_KEY]") : chunk;
+    claudeStderr = `${claudeStderr}${sanitized}`.slice(-4000);
+  };
+
+  const buildRunnerErrorMessage = (error: unknown): string => {
+    const baseMessage = error instanceof Error ? error.message : String(error);
+    const detail = claudeStderr.trim();
+    return detail ? `${baseMessage}\n\nClaude CLI stderr:\n${detail}` : baseMessage;
+  };
+
   // ============================================
   // 主执行逻辑
   // ============================================
@@ -209,6 +222,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         });
         return;
       }
+      activeApiKey = config.apiKey;
 
       const apiType = config.apiType || "nvidia";
       if (apiType === "nvidia") {
@@ -254,6 +268,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           },
           includePartialMessages: true,
           allowDangerouslySkipPermissions: true,
+          stderr: appendClaudeStderr,
           // 使用 PermissionManager 处理工具权限
           canUseTool: async (toolName, input, { signal }) => {
             return handleToolPermission(toolName, input, signal);
@@ -278,9 +293,15 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
         // 更新会话状态
         if (message.type === "result") {
           const status = message.subtype === "success" ? "completed" : "error";
+          const errors = "errors" in message && Array.isArray(message.errors) ? message.errors : [];
           onEvent({
             type: "session.status",
-            payload: { sessionId: session.id, status, title: session.title },
+            payload: {
+              sessionId: session.id,
+              status,
+              title: session.title,
+              error: errors.length > 0 ? errors.join("\n") : undefined,
+            },
           });
         }
       }
@@ -305,7 +326,7 @@ export async function runClaude(options: RunnerOptions): Promise<RunnerHandle> {
           sessionId: session.id,
           status: "error",
           title: session.title,
-          error: String(error),
+          error: buildRunnerErrorMessage(error),
         },
       });
     }

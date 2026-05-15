@@ -38,7 +38,7 @@ describe("SettingsModal API connection test", () => {
     expect(await screen.findByText("连接成功！")).toBeInTheDocument();
   });
 
-  it("should allow NVIDIA users to test a custom model from the dropdown footer", async () => {
+  it("should test NVIDIA with the empirically supported Agent runtime model", async () => {
     render(<SettingsModal onClose={vi.fn()} />);
 
     await screen.findByText("API 配置");
@@ -46,12 +46,8 @@ describe("SettingsModal API connection test", () => {
     fireEvent.change(screen.getByPlaceholderText("nvapi-..."), {
       target: { value: "nvapi-test-key" },
     });
-    fireEvent.change(screen.getByRole("combobox"), {
-      target: { value: "__custom_nvidia_model__" },
-    });
-    fireEvent.change(screen.getByPlaceholderText("例如：provider/model-name"), {
-      target: { value: "provider/free-custom-model" },
-    });
+
+    expect(screen.queryByText("自定义模型...")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "测试" }));
 
@@ -59,7 +55,7 @@ describe("SettingsModal API connection test", () => {
       expect(window.electron.testApiConnection).toHaveBeenCalledWith({
         apiKey: "nvapi-test-key",
         baseURL: "https://integrate.api.nvidia.com/v1",
-        model: "provider/free-custom-model",
+        model: "minimaxai/minimax-m2.7",
         apiType: "nvidia",
       });
     });

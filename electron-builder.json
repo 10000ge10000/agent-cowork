@@ -3,12 +3,20 @@
     "productName": "Agent Cowork",
     "files": [
         "dist-electron",
-        "dist-react"
+        "dist-react",
+        "THIRD_PARTY_NOTICES.md"
     ],
     "extraResources": [
         {
             "from": "claude-color.png",
             "to": "claude-color.png"
+        },
+        {
+            "from": "vendor/git",
+            "to": "git",
+            "filter": [
+                "**/*"
+            ]
         }
     ],
     "asarUnpack": [

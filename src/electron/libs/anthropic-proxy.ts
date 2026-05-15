@@ -14,6 +14,7 @@ import { createServer, IncomingMessage, ServerResponse, Server } from "http";
 import { request as httpsRequest } from "https";
 import { request as httpRequest } from "http";
 import { URL } from "url";
+import { NVIDIA_DEFAULT_AGENT_MODEL, isSupportedNvidiaAgentModel } from "../../shared/nvidia-models.js";
 
 export const DEFAULT_PROXY_PORT = 18765;
 
@@ -117,7 +118,6 @@ interface OpenAIToolCall {
 }
 
 const CLAUDE_MODEL_PREFIXES = ["claude-", "anthropic/claude-"];
-const NVIDIA_DEFAULT_MODEL = "minimaxai/minimax-m2.7";
 const NVIDIA_MIN_OUTPUT_TOKENS = 8192;
 
 /**
@@ -361,8 +361,12 @@ function generateId(): string {
  */
 function resolveNvidiaTargetModel(model: string): string {
   const trimmed = model.trim();
-  if (!trimmed || CLAUDE_MODEL_PREFIXES.some((prefix) => trimmed.startsWith(prefix))) {
-    return NVIDIA_DEFAULT_MODEL;
+  if (
+    !trimmed ||
+    CLAUDE_MODEL_PREFIXES.some((prefix) => trimmed.startsWith(prefix)) ||
+    !isSupportedNvidiaAgentModel(trimmed)
+  ) {
+    return NVIDIA_DEFAULT_AGENT_MODEL;
   }
   return trimmed;
 }

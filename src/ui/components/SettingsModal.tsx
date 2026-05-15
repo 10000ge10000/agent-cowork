@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ApiType } from "../../shared/types";
+import {
+  NVIDIA_AGENT_MODELS,
+  NVIDIA_DEFAULT_AGENT_MODEL,
+  isSupportedNvidiaAgentModel,
+} from "../../shared/nvidia-models";
 import { PermissionSettings } from "./PermissionSettings";
 
 type SettingsModalProps = {
@@ -8,27 +13,12 @@ type SettingsModalProps = {
 
 type TabType = "api" | "permissions";
 
-const NVIDIA_DEFAULT_MODEL = "minimaxai/minimax-m2.7";
-const NVIDIA_CUSTOM_MODEL_VALUE = "__custom_nvidia_model__";
-
-const NVIDIA_FREE_MODELS = [
-  { value: "minimaxai/minimax-m2.7", label: "MiniMax M2.7（默认，实测可用）" },
-  { value: "qwen/qwen3-next-80b-a3b-instruct", label: "Qwen3 Next 80B A3B（热门，快速）" },
-  { value: "mistralai/ministral-14b-instruct-2512", label: "Ministral 14B（稳定快速）" },
-  { value: "qwen/qwen3.5-122b-a10b", label: "Qwen3.5 122B（热门，可用）" },
-  { value: "deepseek-ai/deepseek-v4-flash", label: "DeepSeek V4 Flash（热门，快速）" },
-];
-
-const isKnownNvidiaModel = (value: string): boolean => NVIDIA_FREE_MODELS.some((item) => item.value === value);
-
 export function SettingsModal({ onClose }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<TabType>("api");
   const [apiType, setApiType] = useState<ApiType>("nvidia");
   const [apiKey, setApiKey] = useState("");
   const [baseURL, setBaseURL] = useState("https://integrate.api.nvidia.com/v1");
-  const [model, setModel] = useState(NVIDIA_DEFAULT_MODEL);
-  const [useCustomNvidiaModel, setUseCustomNvidiaModel] = useState(false);
-  const [nvidiaCustomModel, setNvidiaCustomModel] = useState("");
+  const [model, setModel] = useState(NVIDIA_DEFAULT_AGENT_MODEL);
   const [customBaseURL, setCustomBaseURL] = useState("");
   const [customModel, setCustomModel] = useState("");
   const [initialLoading, setInitialLoading] = useState(true);
@@ -52,9 +42,14 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         if (config.apiType === "custom") {
           setCustomBaseURL(config.baseURL);
           setCustomModel(config.model);
-        } else if (!isKnownNvidiaModel(config.model)) {
-          setUseCustomNvidiaModel(true);
-          setNvidiaCustomModel(config.model);
+        } else if (!isSupportedNvidiaAgentModel(config.model)) {
+          setTestResult({
+            success: false,
+            message: `当前 NVIDIA 模型 ${config.model} 未通过 Agent 运行时验证，已回退到 ${NVIDIA_DEFAULT_AGENT_MODEL}。`,
+          });
+          setModel(NVIDIA_DEFAULT_AGENT_MODEL);
+          setBaseURL(config.baseURL);
+          return;
         }
 
         setBaseURL(config.baseURL);
@@ -80,8 +75,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
     if (type === "nvidia") {
       setBaseURL("https://integrate.api.nvidia.com/v1");
-      setUseCustomNvidiaModel(false);
-      setModel(isKnownNvidiaModel(model) ? model : NVIDIA_DEFAULT_MODEL);
+      setModel(isSupportedNvidiaAgentModel(model) ? model : NVIDIA_DEFAULT_AGENT_MODEL);
     } else {
       setBaseURL(customBaseURL);
       setModel(customModel);
@@ -105,22 +99,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const handleNvidiaModelSelect = (value: string) => {
     setError(null);
     setTestResult(null);
-
-    if (value === NVIDIA_CUSTOM_MODEL_VALUE) {
-      setUseCustomNvidiaModel(true);
-      setModel(nvidiaCustomModel);
-      return;
-    }
-
-    setUseCustomNvidiaModel(false);
     setModel(value);
-  };
-
-  const handleNvidiaCustomModelChange = (value: string) => {
-    setNvidiaCustomModel(value);
-    setModel(value);
-    setError(null);
-    setTestResult(null);
   };
 
   const validateInput = (): boolean => {
@@ -348,33 +327,21 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     <div className="space-y-2">
                       <select
                         className="mt-1.5 w-full rounded-xl border border-ink-900/10 bg-surface-secondary px-4 py-2.5 text-sm text-ink-800 focus:border-accent focus:outline-none appearance-none cursor-pointer"
-                        value={useCustomNvidiaModel ? NVIDIA_CUSTOM_MODEL_VALUE : model}
+                        value={model}
                         onChange={(e) => handleNvidiaModelSelect(e.target.value)}
                       >
-                        {NVIDIA_FREE_MODELS.map((item) => (
+                        {NVIDIA_AGENT_MODELS.map((item) => (
                           <option key={item.value} value={item.value}>
                             {item.label}
                           </option>
                         ))}
-                        <option value={NVIDIA_CUSTOM_MODEL_VALUE}>自定义模型...</option>
                       </select>
-
-                      {useCustomNvidiaModel && (
-                        <input
-                          type="text"
-                          className="w-full rounded-xl border border-ink-900/10 bg-surface-secondary px-4 py-2.5 text-sm text-ink-800 placeholder:text-muted-light focus:border-accent focus:outline-none"
-                          placeholder="例如：provider/model-name"
-                          value={nvidiaCustomModel}
-                          onChange={(e) => handleNvidiaCustomModelChange(e.target.value)}
-                          required
-                        />
-                      )}
                     </div>
                   )}
                 </div>
 
                 {testResult && (
-                  <div className={`rounded-xl border px-4 py-2.5 text-sm ${
+                  <div className={`max-h-56 overflow-auto whitespace-pre-wrap rounded-xl border px-4 py-2.5 text-sm ${
                     testResult.success ? "border-success/20 bg-success/10 text-success" : "border-error/20 bg-error/10 text-error"
                   }`}
                   >
